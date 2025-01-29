@@ -9,109 +9,110 @@ import (
 	"fmt"
 	"os"
 	"time"
-	"net/http"
 
+	utils "github.com/ItsMeSamey/go_utils"
+	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/gin-gonic/gin"
 )
 
-func ValidateAuth(c *gin.Context) {
+func ValidateAuth(c *fiber.Ctx) error {
+	var tokenBody struct {
+		Token string `json:"token"`
+	}
 
-	// Read the raw body first
-    body, err := c.GetRawData()
-    if err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{
-            "error": "Cannot read request body",
-        })
-        c.Abort()
-        return
-    }
-    
-    // Print out the raw body for debugging
-    fmt.Println("Raw body:", string(body))
-
-    var tokenBody struct {
-        Token string `json:"token"`
-    }
-    if err := c.ShouldBindBodyWithJSON(&tokenBody); err != nil {
-		fmt.Println("Binding error:", err)
-        c.JSON(http.StatusBadRequest, gin.H{
-            "error": "Invalid parameters",
+	// Parse JSON body
+	if err := utils.WithStack(c.BodyParser(&tokenBody)); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":          "Invalid parameters",
 			"detailed_error": err.Error(),
-        })
-        c.Abort() // Prevent further handlers from running.
-        return
-    }
-    secret := os.Getenv("SECRET")
+		})
+	}
 
-    token, err := jwt.Parse(tokenBody.Token, func(token *jwt.Token) (interface{}, error) {
-        if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-            return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-        }
-        return []byte(secret), nil
-    })
+	secret := os.Getenv("SECRET")
 
-    if err != nil {
-        c.JSON(http.StatusUnauthorized, gin.H{})
-        c.Abort() // Stop further handlers.
-        return
-    }
+	// Debug print for token
+	fmt.Println("Received Token:", tokenBody.Token)
 
-    if claims, ok := token.Claims.(jwt.MapClaims); ok {
-        if float64(time.Now().Unix()) > claims["exp"].(float64) {
-            c.JSON(http.StatusUnauthorized, gin.H{
-                "error": "Token expired",
-            })
-            c.Abort()
-            return
-        }
+	token, err := jwt.Parse(tokenBody.Token, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(secret), nil
+	})
 
-        encryptedData, ok := claims["ex"].(string)
-        if !ok {
-            c.JSON(http.StatusUnauthorized, gin.H{
-                "error": "Missing encrypted data in token",
-            })
-            c.Abort()
-            return
-        }
+	if err = utils.WithStack(err); err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{})
+	}
 
-        decryptedData, err := decrypt(encryptedData, secret)
-        if err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{
-                "error": "Failed to decrypt token payload",
-            })
-            c.Abort()
-            return
-        }
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		// Debug print for claims
+		fmt.Println("Token Claims:")
+		for k, v := range claims {
+			fmt.Printf("%s: %v\n", k, v)
+		}
 
-        c.Set("data", decryptedData)
-        c.Next() // Pass control to the next handler.
-    } else {
-        c.JSON(http.StatusUnauthorized, gin.H{
-            "error": "Invalid token claims",
-        })
-        c.Abort()
-        return
-    }
+		if float64(time.Now().Unix()) > claims["exp"].(float64) {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Token expired",
+			})
+		}
+
+		encryptedData, ok := claims["ex"].(string)
+		if !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Missing encrypted data in token",
+			})
+		}
+
+		// Debug print for encrypted data
+		fmt.Println("Encrypted Data:", encryptedData)
+
+		decryptedData, err := decrypt(encryptedData, secret)
+		if err = utils.WithStack(err); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to decrypt token payload",
+			})
+		}
+
+		// Store decrypted data in Fiber's locals
+		c.Locals("data", decryptedData)
+
+		return c.Next()
+	} else {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid token claims",
+		})
+	}
 }
 
-
 func decrypt(encryptedData, key string) (map[string]interface{}, error) {
+	fmt.Println("Starting Decryption Process")
+	fmt.Println("Encrypted Data Length:", len(encryptedData))
+	fmt.Println("Key Length:", len(key))
+
 	if len(key) < 32 {
 		return nil, errors.New("key must be at least 32 characters long for AES-256 encryption")
 	}
 
 	data, err := hex.DecodeString(encryptedData)
-	if err != nil {
+	if err = utils.WithStack(err); err != nil {
+		fmt.Println("Hex Decode Error:", err)
 		return nil, fmt.Errorf("failed to decode encrypted data: %w", err)
 	}
+
+	fmt.Println("Decoded Data Length:", len(data))
 
 	iv := data[:aes.BlockSize]
 	ciphertext := data[aes.BlockSize:]
 	keyBytes := []byte(key[:32])
 
+	fmt.Println("IV:", hex.EncodeToString(iv))
+	fmt.Println("Ciphertext Length:", len(ciphertext))
+	fmt.Println("Key:", hex.EncodeToString(keyBytes))
+
 	block, err := aes.NewCipher(keyBytes)
-	if err != nil {
+	if err = utils.WithStack(err); err != nil {
+		fmt.Println("Cipher Creation Error:", err)
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
 
@@ -119,14 +120,26 @@ func decrypt(encryptedData, key string) (map[string]interface{}, error) {
 	decrypted := make([]byte, len(ciphertext))
 	mode.CryptBlocks(decrypted, ciphertext)
 
+	fmt.Println("Decrypted Bytes (before unpad):", hex.EncodeToString(decrypted))
+
 	decrypted, err = unpadPKCS7(decrypted)
-	if err != nil {
+	if err = utils.WithStack(err); err != nil {
+		fmt.Println("Unpad Error:", err)
 		return nil, fmt.Errorf("failed to unpad decrypted data: %w", err)
 	}
 
+	fmt.Println("Decrypted Bytes (after unpad):", string(decrypted))
+
 	var result map[string]interface{}
 	if err := json.Unmarshal(decrypted, &result); err != nil {
+		err = utils.WithStack(err)
+		fmt.Println("JSON Unmarshal Error:", err)
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	fmt.Println("Decrypted Data:")
+	for k, v := range result {
+		fmt.Printf("%s: %v\n", k, v)
 	}
 
 	return result, nil

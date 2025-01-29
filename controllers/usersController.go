@@ -1,157 +1,120 @@
 package controllers
 
 import (
-	"backend/initializers"
-	"backend/models"
-	"net/http"
 	"os"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+
+	"backend/initializers"
+	"backend/models"
 )
 
-// func Signup(c *gin.Context){
-
-// 	// bind request body to struct
-// 	var body struct {
-// 		Email string
-// 		Password string
-// 	}
-// 	if c.Bind(&body) != nil {
-// 		c.JSON(http.StatusBadRequest, gin.H{
-// 			"error": "Invalid parameters",
-// 		})
-// 		return
-// 	}
-
-// 	// hash password
-// 	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
-
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{
-// 			"error": "Failed to hash password",
-// 		})
-// 		return
-// 	}
-// 	user := models.User{Email: body.Email, Password: string(hash)}
-// 	result := initializers.DB.Create(&user)
-
-// 	if result.Error != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{
-// 			"error": "Failed to create user",
-// 		})
-// 		return
-// 	}
-
-// 	c.JSON(http.StatusOK, gin.H{"message": "User created",})
-// }
-
-// func Login(c *gin.Context){
-
-// 	// get email and password from request
-// 	var body struct {
-// 		Email string
-// 		Password string
-// 	}
-// 	if c.Bind(&body) != nil {
-// 		c.JSON(http.StatusBadRequest, gin.H{
-// 			"error": "Invalid parameters",
-// 		})
-// 		return
-// 	}
-
-// 	// find user by email
-// 	var user models.User
-// 	result := initializers.DB.First(&user, "email = ?", body.Email)
-
-// 	if result.Error != nil {
-// 		c.JSON(http.StatusUnauthorized, gin.H{
-// 			"error": "Invalid email or password",
-// 		})
-// 		return
-// 	}
-	
-// 	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(body.Password))
-
-// 	if err != nil {
-// 		c.JSON(http.StatusUnauthorized, gin.H{
-// 			"error": "Invalid email or password",
-// 		})
-// 		return
-// 	}
-
-// 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-// 		"sub": user.ID,
-// 		"exp": time.Now().Add(time.Hour * 24).Unix(),
-// 	})
-
-// 	tokenString, err := token.SignedString([]byte(os.Getenv("SECRET")))
-
-// 	if err != nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{
-// 			"error": "Failed to generate token",
-// 		})
-// 		return
-// 	}
-// 	c.SetSameSite(http.SameSiteLaxMode)
-// 	c.SetCookie("Authorization", tokenString, 3600*24, "/", "", false, true)
-
-// 	c.JSON(http.StatusOK, gin.H{"message": "Logged in",})
-// }
-
-func LoginWithCCS(c *gin.Context){
-
-	var body struct {
-		Email string
-		Name string
-		ProfilePic string
-	}
-	if c.Bind(&body) != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid parameters",
+func LoginWithCCS(c *fiber.Ctx) error {
+	// Get decrypted data from middleware
+	decryptedData, ok := c.Locals("data").(map[string]interface{})
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid user data",
 		})
-		return
 	}
 
-	// Signup user if not exists
+	// Extract user details
+	email, _ := decryptedData["email"].(string)
+	name, _ := decryptedData["name"].(string)
+	profilePic, _ := decryptedData["profilePic"].(string)
+
+	if email == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Missing email",
+		})
+	}
+
+	// Find or create user
 	var user models.User
-	result := initializers.DB.First(&user, "email = ?", body.Email)
+	result := initializers.DB.First(&user, "email = ?", email)
 
 	if result.Error != nil {
-		user := models.User{Email: body.Email, Name: body.Name, ProfilePic: body.ProfilePic}
-		result := initializers.DB.Create(&user)
+		// User not found, create new user
+		user = models.User{
+			Email:      email,
+			Name:       name,
+			ProfilePic: profilePic,
+		}
+		result = initializers.DB.Create(&user)
 
 		if result.Error != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "Failed to create user",
 			})
-			return
 		}
-
-		c.JSON(http.StatusOK, gin.H{"message": "User created",})
+	} else {
+		// Update existing user if details changed
+		user.Name = name
+		user.ProfilePic = profilePic
+		initializers.DB.Save(&user)
 	}
 
+	// Generate token
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": user.ID,
 		"exp": time.Now().Add(time.Hour * 24).Unix(),
 	})
 
 	tokenString, err := token.SignedString([]byte(os.Getenv("SECRET")))
-
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to generate token",
 		})
-		return
 	}
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("Authorization", tokenString, 3600*24, "/", "", false, true)
 
-	c.JSON(http.StatusOK, gin.H{"message": "Logged in",})
+	// Set cookie
+	c.Cookie(&fiber.Cookie{
+		Name:     "Authorization",
+		Value:    tokenString,
+		Path:     "/",
+		MaxAge:   3600 * 24,
+		HTTPOnly: true,
+		SameSite: "Lax",
+	})
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Logged in",
+		"user": fiber.Map{
+			"id":         user.ID,
+			"email":      user.Email,
+			"name":       user.Name,
+			"profilePic": user.ProfilePic,
+		},
+	})
 }
 
-func Validate(c *gin.Context){
+func Validate(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Validated",
+	})
+}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Valid token",})
+func GetUserProfile(c *fiber.Ctx) error {
+	// Get the user from context (basic info)
+	authUser := c.Locals("user").(models.User)
+	
+	// Create a fresh user object with preloaded relations
+	var user models.User
+	err := initializers.DB.
+		Preload("PublicProfile").
+		Where("id = ?", authUser.ID).
+		First(&user).
+		Error
+
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch user profile",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"user": user,
+	})
 }

@@ -4,24 +4,24 @@ import (
 	"backend/initializers"
 	"backend/models"
 	"fmt"
-	"net/http"
 	"os"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func RequireAuth(c *gin.Context) {
-	// get cookie from request
-	cookie, err := c.Cookie("Authorization")
-	if err != nil {
-		c.AbortWithStatus(http.StatusUnauthorized)
+func RequireAuth(c *fiber.Ctx) error {
+	// Get cookie from request
+	cookie := c.Cookies("Authorization")
+	if cookie == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "No authorization token",
+		})
 	}
 
-	// validate cookie
+	// Validate cookie
 	token, err := jwt.Parse(cookie, func(token *jwt.Token) (interface{}, error) {
-
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
@@ -30,27 +30,34 @@ func RequireAuth(c *gin.Context) {
 	})
 
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{})
-		return
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid token",
+		})
 	}
 	
 	if claims, ok := token.Claims.(jwt.MapClaims); ok {
-
 		if float64(time.Now().Unix()) > claims["exp"].(float64) {
-			c.AbortWithStatus(http.StatusUnauthorized)
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Token expired",
+			})
 		}
 
 		var user models.User
-		initializers.DB.First(&user, "id = ?", claims["sub"])
+		result := initializers.DB.First(&user, "id = ?", claims["sub"])
 
-		if user.ID == 0 {
-			c.AbortWithStatus(http.StatusUnauthorized)
+		if result.Error != nil || user.ID == 0 {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "User not found",
+			})
 		}
 
-		c.Set("user", user)
+		// Store user in locals
+		c.Locals("user", user)
 
-		c.Next()
-	} else {
-		c.AbortWithStatus(http.StatusUnauthorized)
-	}
+		return c.Next()
+	} 
+
+	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		"error": "Invalid token claims",
+	})
 }
