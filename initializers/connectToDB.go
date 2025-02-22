@@ -40,7 +40,7 @@ func ConnectMongoDB(){
 
 	log.Println("Pinged your deployment. You successfully connected to MongoDB!")
 
-	DB = client.Database(os.Getenv("MONGODB_DB"))
+	// DB = client.Database(os.Getenv("MONGODB_DB"))
 	// UserDB = Collection[User]{DB.Collection("users")}
 	// ClientDB = Collection[Client]{DB.Collection("clients")}
 	// SentMailDB = Collection[Client]{DB.Collection("sent-mails")}

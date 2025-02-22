@@ -1,17 +1,19 @@
 package middleware
 
 import (
-	"backend/initializers"
-	"backend/models"
+	"backend/database"
+	"log"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	utils "github.com/ItsMeSamey/go_utils"
+	"github.com/gofiber/fiber/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
-func RequireAuth(c *fiber.Ctx) error {
+func RequireAuth(c fiber.Ctx) error {
 	// Get cookie from request
 	cookie := c.Cookies("Authorization")
 	if cookie == "" {
@@ -42,17 +44,21 @@ func RequireAuth(c *fiber.Ctx) error {
 			})
 		}
 
-		var user models.User
-		result := initializers.DB.First(&user, "id = ?", claims["sub"])
-
-		if result.Error != nil || user.ID == 0 {
+		result, exists, err := database.UserDB.GetExists(bson.M{"email": claims["email"]})
+		if err != nil {
+			log.Println(utils.WithStack(err))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to fetch user",
+			})
+		}
+		if !exists {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "User not found",
 			})
 		}
 
 		// Store user in locals
-		c.Locals("user", user)
+		c.Locals("user", result)
 
 		return c.Next()
 	} 
