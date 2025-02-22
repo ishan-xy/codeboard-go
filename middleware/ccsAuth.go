@@ -30,9 +30,6 @@ func ValidateAuth(c *fiber.Ctx) error {
 
 	secret := os.Getenv("SECRET")
 
-	// Debug print for token
-	fmt.Println("Received Token:", tokenBody.Token)
-
 	token, err := jwt.Parse(tokenBody.Token, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -45,8 +42,7 @@ func ValidateAuth(c *fiber.Ctx) error {
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok {
-		// Debug print for claims
-		fmt.Println("Token Claims:")
+
 		for k, v := range claims {
 			fmt.Printf("%s: %v\n", k, v)
 		}
@@ -63,9 +59,6 @@ func ValidateAuth(c *fiber.Ctx) error {
 				"error": "Missing encrypted data in token",
 			})
 		}
-
-		// Debug print for encrypted data
-		fmt.Println("Encrypted Data:", encryptedData)
 
 		decryptedData, err := decrypt(encryptedData, secret)
 		if err = utils.WithStack(err); err != nil {
@@ -86,9 +79,9 @@ func ValidateAuth(c *fiber.Ctx) error {
 }
 
 func decrypt(encryptedData, key string) (map[string]interface{}, error) {
-	fmt.Println("Starting Decryption Process")
-	fmt.Println("Encrypted Data Length:", len(encryptedData))
-	fmt.Println("Key Length:", len(key))
+	// fmt.Println("Starting Decryption Process")
+	// fmt.Println("Encrypted Data Length:", len(encryptedData))
+	// fmt.Println("Key Length:", len(key))
 
 	if len(key) < 32 {
 		return nil, errors.New("key must be at least 32 characters long for AES-256 encryption")
@@ -100,15 +93,15 @@ func decrypt(encryptedData, key string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to decode encrypted data: %w", err)
 	}
 
-	fmt.Println("Decoded Data Length:", len(data))
+	// fmt.Println("Decoded Data Length:", len(data))
 
 	iv := data[:aes.BlockSize]
 	ciphertext := data[aes.BlockSize:]
 	keyBytes := []byte(key[:32])
 
-	fmt.Println("IV:", hex.EncodeToString(iv))
-	fmt.Println("Ciphertext Length:", len(ciphertext))
-	fmt.Println("Key:", hex.EncodeToString(keyBytes))
+	// fmt.Println("IV:", hex.EncodeToString(iv))
+	// fmt.Println("Ciphertext Length:", len(ciphertext))
+	// fmt.Println("Key:", hex.EncodeToString(keyBytes))
 
 	block, err := aes.NewCipher(keyBytes)
 	if err = utils.WithStack(err); err != nil {
@@ -120,7 +113,7 @@ func decrypt(encryptedData, key string) (map[string]interface{}, error) {
 	decrypted := make([]byte, len(ciphertext))
 	mode.CryptBlocks(decrypted, ciphertext)
 
-	fmt.Println("Decrypted Bytes (before unpad):", hex.EncodeToString(decrypted))
+	// fmt.Println("Decrypted Bytes (before unpad):", hex.EncodeToString(decrypted))
 
 	decrypted, err = unpadPKCS7(decrypted)
 	if err = utils.WithStack(err); err != nil {
@@ -128,7 +121,7 @@ func decrypt(encryptedData, key string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to unpad decrypted data: %w", err)
 	}
 
-	fmt.Println("Decrypted Bytes (after unpad):", string(decrypted))
+	// fmt.Println("Decrypted Bytes (after unpad):", string(decrypted))
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(decrypted, &result); err != nil {
@@ -137,7 +130,7 @@ func decrypt(encryptedData, key string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 
-	fmt.Println("Decrypted Data:")
+	// fmt.Println("Decrypted Data:")
 	for k, v := range result {
 		fmt.Printf("%s: %v\n", k, v)
 	}
